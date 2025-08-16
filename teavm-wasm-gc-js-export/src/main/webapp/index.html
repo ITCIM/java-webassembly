@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TeaVM WebAssembly GC – Interactive Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+    :root { --card:#121212; --muted:#bdbdbd; --accent:#4CAF50; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #eee; background: #0b0b0b;}
+    h1 { margin-bottom: .5rem; }
+    p.hint { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 1rem; margin-top: 1rem; }
+    .card { background: var(--card); border: 1px solid #222; border-radius: 12px; padding: 1rem; }
+    label { display: block; font-size: .9rem; color: var(--muted); margin: .25rem 0 .25rem; }
+    input, button, select, textarea { width: 100%; padding: .6rem .7rem; border-radius: 10px; border: 1px solid #333; background:#0e0e0e; color:#eee; }
+    button { background: var(--accent); color: #0b0b0b; border: none; cursor: pointer; font-weight: 600; }
+    button:hover { filter: brightness(1.05); }
+    .out { display:block; margin-top:.6rem; background:#0e0e0e; border:1px solid #333; padding:.6rem .7rem; border-radius:10px; min-height:2rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+    .ok { background:#0e2015; border:1px solid #214b34; color:#c7f1d0; padding:.6rem .7rem; border-radius:10px; margin-bottom: 1rem; }
+    .err { background:#2a0e0e; border:1px solid #5c1f1f; color:#f3cccc; padding:.6rem .7rem; border-radius:10px; margin-bottom: 1rem; }
+  </style>
+
+  <!-- MIME fallback: if server doesn't return application/wasm, fall back to arrayBuffer -->
+  <script>
+  (function() {
+    if (typeof WebAssembly !== 'object') return;
+    const orig = WebAssembly.instantiateStreaming;
+    WebAssembly.instantiateStreaming = async function(source, importObject) {
+      try {
+        if (orig) {
+          const resp = await Promise.resolve(source);
+          const ct = resp && resp.headers && resp.headers.get ? resp.headers.get('Content-Type') : null;
+          if (ct && /application\/wasm/i.test(ct)) {
+            return orig(Promise.resolve(resp), importObject);
+          }
+          const buf = await resp.arrayBuffer();
+          return WebAssembly.instantiate(buf, importObject);
+        }
+      } catch (e) {
+        // ignore and use non-streaming path below
+      }
+      const resp = await Promise.resolve(source);
+      const buf = await resp.arrayBuffer();
+      return WebAssembly.instantiate(buf, importObject);
+    };
+  })();
+  </script>
+
+  <!-- TeaVM GC runtime: fixed filename aligned with your build output -->
+  <script src="wasm-gc/classes.wasm-runtime.js"></script>
+
+  <script>
+  // Global state
+  window.teavm = null;
+
+  function $(id){ return document.getElementById(id); }
+  function setStatus(ok, msg) {
+    const st = $('status');
+    st.className = ok ? 'ok' : 'err';
+    st.textContent = msg;
+  }
+
+  // Boot once DOM is ready
+  window.boot = async function boot() {
+    try {
+      // If runtime wasn't found, this will throw ReferenceError
+      window.teavm = await TeaVM.wasmGC.load("wasm-gc/app.wasm");
+      if (window.teavm.exports && typeof window.teavm.exports.main === "function") { try { window.teavm.exports.main([]); } catch(e) { console.warn("main([]) failed:", e); } }
+      setStatus(true, 'WebAssembly GC module loaded.');
+    } catch (e) {
+      setStatus(false, 'Failed to load WebAssembly: ' + e);
+    }
+  };
+  document.addEventListener('DOMContentLoaded', window.boot);
+
+  // Handlers exposed globally so inline onclick finds them
+  window.onAdd = async function onAdd() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const a = parseInt($('addA').value || '0', 10);
+    const b = parseInt($('addB').value || '0', 10);
+    $('addOut').textContent = window.teavm.exports.add(a, b);
+  };
+
+  window.onCmp = async function onCmp() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const a = parseInt($('addA').value || '0', 10);
+    const b = parseInt($('addB').value || '0', 10);
+    $('cmpOut').textContent = String(window.teavm.exports.isGreater(a, b));
+  };
+
+  window.onConcat = async function onConcat() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const a = $('sA').value || '';
+    const b = $('sB').value || '';
+    $('sOut').textContent = window.teavm.exports.concat(a, b);
+  };
+
+  window.onSubstr = async function onSubstr() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const s = $('strBase').value || '';
+    const b = parseInt($('strB').value || '0', 10);
+    const e = parseInt($('strE').value || '0', 10);
+    $('strOut').textContent = window.teavm.exports.substring(s, b, e);
+  };
+
+  window.onListSort = async function onListSort() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const csv = $('listCsv').value || '';
+    $('listOut').textContent = window.teavm.exports.sortListCSV(csv);
+  };
+
+  window.onListGet = async function onListGet() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const csv = $('listCsv').value || '';
+    const idx = parseInt($('listIdx').value || '0', 10);
+    $('listOut').textContent = window.teavm.exports.listGetAt(csv, idx);
+  };
+
+  window.onSetSort = async function onSetSort() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const csv = $('setCsv').value || '';
+    $('setOut').textContent = window.teavm.exports.sortSetCSV(csv);
+  };
+
+  window.onSetHas = async function onSetHas() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const csv = $('setCsv').value || '';
+    const v = $('setVal').value || '';
+    $('setOut').textContent = String(window.teavm.exports.setContains(csv, v));
+  };
+
+  window.onCachePut = async function onCachePut() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const k = $('cacheK').value || '';
+    const v = $('cacheV').value || '';
+    $('cacheOut').textContent = '(prev) ' + window.teavm.exports.cachePut(k, v);
+  };
+
+  window.onCacheGet = async function onCacheGet() {
+    if (!window.teavm) return setStatus(false, 'Module not loaded yet.');
+    const k = $('cacheK').value || '';
+    $('cacheOut').textContent = window.teavm.exports.cacheGet(k);
+  };
+  </script>
+</head>
+<body>
+  <h1>TeaVM WebAssembly GC – Interactive Demo</h1>
+  <p class="hint">Enter values and click buttons. All operations run in Java compiled to WebAssembly (GC backend) via TeaVM.</p>
+  <div id="status" class="err">Loading WebAssembly module…</div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Primitives</h3>
+      <div class="row">
+        <div><label>A</label><input id="addA" type="number" value="7"></div>
+        <div><label>B</label><input id="addB" type="number" value="3"></div>
+      </div>
+      <div class="row" style="margin-top:.6rem;">
+        <button onclick="onAdd()">add(A,B)</button>
+        <button onclick="onCmp()">isGreater(A,B)</button>
+      </div>
+      <div class="out" id="addOut"></div>
+      <div class="out" id="cmpOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>Strings</h3>
+      <label>First</label><input id="sA" value="Hello">
+      <label>Second</label><input id="sB" value="WebAssembly">
+      <button style="margin-top:.6rem" onclick="onConcat()">concat(a,b)</button>
+      <div class="out" id="sOut"></div>
+      <hr style="border:0;border-top:1px solid #222;margin:1rem 0;">
+      <label>Base string</label><input id="strBase" value="Hello WebAssembly!">
+      <div class="row">
+        <div><label>begin</label><input id="strB" type="number" value="0"></div>
+        <div><label>end</label><input id="strE" type="number" value="5"></div>
+      </div>
+      <button style="margin-top:.6rem" onclick="onSubstr()">substring(s,begin,end)</button>
+      <div class="out" id="strOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>List (CSV)</h3>
+      <label>CSV list</label><input id="listCsv" value="Banana, Apple, Cherry">
+      <div class="row">
+        <button onclick="onListSort()">sortListCSV</button>
+        <div>
+          <label>Index</label><input id="listIdx" type="number" value="1">
+          <button onclick="onListGet()" style="margin-top:.4rem">listGetAt</button>
+        </div>
+      </div>
+      <div class="out" id="listOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>Set (CSV)</h3>
+      <label>CSV set</label><input id="setCsv" value="2, 1, 3, 2">
+      <div class="row">
+        <button onclick="onSetSort()">sortSetCSV</button>
+        <div>
+          <label>Value</label><input id="setVal" value="3">
+          <button onclick="onSetHas()" style="margin-top:.4rem">setContains</button>
+        </div>
+      </div>
+      <div class="out" id="setOut"></div>
+    </div>
+
+    <div class="card">
+      <h3>Map Cache</h3>
+      <label>Key</label><input id="cacheK" value="user:42">
+      <label>Value</label><input id="cacheV" value="Alice">
+      <div class="row" style="margin-top:.6rem;">
+        <button onclick="onCachePut()">cachePut</button>
+        <button onclick="onCacheGet()">cacheGet</button>
+      </div>
+      <div class="out" id="cacheOut"></div>
+    </div>
+  </div>
+</body>
+</html>
